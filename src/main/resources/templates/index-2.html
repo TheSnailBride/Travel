@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>KakaoMap 실습 2단계 - 키워드 검색</title>
+    <!-- Kakao Maps JS SDK: 앱 키를 아래 YOUR_APP_KEY_HERE 로 교체하세요 -->
+    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=0655c4042301822abc2935eb24a431c8&autoload=false&libraries=services"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Pretendard, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', Arial; }
+        header { padding: 14px 18px; border-bottom: 1px solid #eee; display:flex; gap:12px; align-items:center; flex-wrap: wrap; }
+        header h1 { font-size: 18px; margin: 0 8px 0 0; }
+        header .hint { color:#666; font-size: 13px; }
+        .wrap { padding: 12px; max-width: 1100px; margin: 0 auto; }
+        .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; margin-bottom:10px; }
+        input[type="text"], select { padding: 10px 12px; border:1px solid #ddd; border-radius:10px; }
+        input[type="text"] { flex: 1; min-width: 260px; }
+        button { padding: 10px 14px; border:1px solid #ddd; background:#fafafa; border-radius:10px; cursor:pointer; }
+        .map { width:100%; height:420px; border:1px solid #f0f0f0; border-radius: 12px; overflow: hidden; }
+        .list { display:grid; gap:8px; margin-top: 10px; }
+        .card { border:1px solid #eee; border-radius:12px; padding:10px; }
+        .card h3 { margin: 0 0 6px; font-size: 15px; }
+        .card p { margin: 2px 0; color:#555; font-size: 13px; }
+        .small { font-size:12px; color:#777; }
+        .legend { margin-top:8px; color:#666; font-size: 12px; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>KakaoMap 실습 2단계</h1>
+    <span class="hint">키워드 검색 + 마커/리스트/인포윈도우</span>
+</header>
+<div class="wrap">
+
+    <!-- 2단계: 키워드 검색 -->
+    <div class="row">
+        <input id="keyword" type="text" placeholder="예) 수원 카페, 버거, 주차장" />
+        <button id="searchBtn">검색</button>
+    </div>
+    <div id="map" class="map"></div>
+    <div class="legend">🔵 키워드 검색 결과</div>
+    <div id="results" class="list"></div>
+
+    <script>
+        kakao.maps.load(function() {
+            // 지도/서비스 준비
+            const map = new kakao.maps.Map(document.getElementById('map'), {
+                center: new kakao.maps.LatLng(37.5665, 126.9780),
+                level: 6
+            });
+            const places = new kakao.maps.services.Places();
+            const infowindow = new kakao.maps.InfoWindow({ zIndex: 1 });
+
+            // 상태
+            let markers = [];
+
+            // 유틸
+            function clearMarkers() { markers.forEach(m => m.setMap(null)); markers = []; }
+            function renderList(items) {
+                const $results = document.getElementById('results');
+                $results.innerHTML = '';
+                items.forEach((p, idx) => {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.innerHTML = `
+            <h3>${idx+1}. ${p.place_name}</h3>
+            <p>${p.road_address_name || p.address_name || ''}</p>
+            <p class="small">전화: ${p.phone || '-'}</p>
+            <p class="small">좌표: ${p.y}, ${p.x}</p>
+          `;
+                    card.onclick = () => map.panTo(new kakao.maps.LatLng(p.y, p.x));
+                    $results.appendChild(card);
+                });
+            }
+
+            // 검색
+            function searchKeyword() {
+                const kw = document.getElementById('keyword').value.trim();
+                if (!kw) { alert('검색어를 입력하세요'); return; }
+                infowindow.close();
+                clearMarkers();
+
+                places.keywordSearch(kw, function(data, status) {
+                    if (status !== kakao.maps.services.Status.OK) {
+                        alert('검색 결과가 없습니다.');
+                        renderList([]);
+                        return;
+                    }
+
+                    // 마커 + 인포윈도우
+                    const bounds = new kakao.maps.LatLngBounds();
+                    data.forEach(p => {
+                        const pos = new kakao.maps.LatLng(p.y, p.x);
+                        bounds.extend(pos);
+                        const marker = new kakao.maps.Marker({ position: pos });
+                        marker.setMap(map);
+                        markers.push(marker);
+
+                        kakao.maps.event.addListener(marker, 'click', function() {
+                            const html = `
+                <div style="padding:8px 10px">
+                  <div style="font-weight:600;margin-bottom:4px">${p.place_name}</div>
+                  <div style="font-size:12px;color:#555">${p.road_address_name || p.address_name || ''}</div>
+                  <div style="font-size:12px;color:#666">전화: ${p.phone || '-'}</div>
+                  <a href="${p.place_url}" target="_blank" style="font-size:12px">상세보기</a>
+                </div>`;
+                            infowindow.setContent(html);
+                            infowindow.open(map, marker);
+                        });
+                    });
+                    map.setBounds(bounds);
+                    renderList(data);
+                });
+            }
+
+            document.getElementById('searchBtn').onclick = searchKeyword;
+            document.getElementById('keyword').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') searchKeyword();
+            });
+        });
+    </script>
+
+</div>
+</body>
+</html>

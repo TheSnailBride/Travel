@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <title>Travel Map</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin:0; padding:0; }
+        #wrap { display:flex; height:100vh; }
+        #map { flex: 6.5; }
+        #sidebar { flex: 3.5; min-width: 400px; border-left:1px solid #e6e6e6; padding:12px; box-sizing:border-box; display: flex; flex-direction: column; }
+        .sidebar-content { flex-grow: 1; overflow-y: auto; }
+        .place { padding:12px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition: background-color 0.2s; }
+        .place:hover { background:#f7f7f7; }
+        .place.active { background:#e6f7ff; border-left: 3px solid #007bff; padding-left:9px; }
+        .meta { color:#666; font-size:0.9rem; margin-top:6px; }
+        .status-text { color:#888; padding: 10px; }
+        .error { color:crimson; font-weight: bold; }
+
+        .search-box { display: flex; padding: 0 10px 10px 10px; gap: 8px; }
+        .search-box input { flex-grow: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .search-box button { padding: 8px 12px; border: none; background-color: #007bff; color: white; cursor: pointer; border-radius: 4px; }
+
+        #pagination { padding: 15px 10px; text-align: center; flex-shrink: 0; }
+        #pagination a { color: black; padding: 8px 12px; text-decoration: none; transition: background-color .3s; border: 1px solid #ddd; margin: 0 2px; cursor: pointer; }
+        #pagination a.active { background-color: #007bff; color: white; border: 1px solid #007bff; }
+        #pagination a:hover:not(.active) { background-color: #ddd; }
+    </style>
+
+    <script th:src="@{|//dapi.kakao.com/v2/maps/sdk.js?appkey=${@environment.getProperty('kakao.api.key')}&libraries=services&autoload=false|}"></script>
+</head>
+<body>
+<div id="wrap">
+    <div id="map"></div>
+    <div id="sidebar">
+        <h2 style="margin-top:0; padding:0 10px; flex-shrink: 0;">관광지 목록</h2>
+        <div class="search-box">
+            <input type="text" id="search-input" placeholder="관광지, 주소 등 검색">
+            <button id="search-btn">검색</button>
+        </div>
+        <div id="status" class="status-text"></div>
+        <div class="sidebar-content">
+            <div id="list"></div>
+        </div>
+        <div id="pagination"></div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        const statusEl = document.getElementById('status');
+        const listEl = document.getElementById('list');
+        const mapEl = document.getElementById('map');
+        const paginationEl = document.getElementById('pagination');
+        const searchInput = document.getElementById('search-input');
+        const searchBtn = document.getElementById('search-btn');
+
+        let map = null; // geocoder는 이제 필요 없습니다.
+        const markers = {}, infowindows = {};
+        const pageSize = 10;
+
+        function dbg(msg, obj){ console.log('[travel-map]', msg, obj ?? ''); }
+
+        function escapeHtml(text){
+            if (!text) return '';
+            return String(text).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        }
+
+        function highlightItem(id){
+            document.querySelectorAll('.place').forEach(el => el.classList.remove('active'));
+            const el = document.getElementById('place-' + id);
+            if (el) {
+                el.classList.add('active');
+                el.scrollIntoView({behavior:'smooth', block:'center'});
+            }
+        }
+
+        function clearAllInfoWindows() {
+            for (let iw of Object.values(infowindows)) {
+                try { iw.close(); } catch(e){}
+            }
+        }
+
+        function showMarkerFor(id, title, address, lat, lng){
+            const pos = new kakao.maps.LatLng(lat, lng);
+            if (markers[id]) {
+                clearAllInfoWindows();
+                infowindows[id].open(map, markers[id]);
+                map.panTo(pos);
+                return;
+            }
+            const marker = new kakao.maps.Marker({ position: pos });
+            marker.setMap(map);
+            const iw = new kakao.maps.InfoWindow({
+                content: `<div style="padding:8px;max-width:220px;"><strong>${escapeHtml(title||'')}</strong><div style="font-size:0.9em;color:#666;margin-top:6px">${escapeHtml(address||'')}</div></div>`,
+                removable: true
+            });
+            markers[id] = marker;
+            infowindows[id] = iw;
+            kakao.maps.event.addListener(marker, 'click', function(){
+                highlightItem(id);
+                clearAllInfoWindows();
+                iw.open(map, marker);
+                map.panTo(pos);
+            });
+            clearAllInfoWindows();
+            iw.open(map, marker);
+            map.panTo(pos);
+        }
+
+        function onPlaceClick(item){
+            const id = item.no;
+            highlightItem(id);
+
+            if (item.latitude && item.longitude) {
+                showMarkerFor(id, item.title, item.address, item.latitude, item.longitude);
+                statusEl.textContent = `'${item.title}' 위치를 지도에 표시했습니다.`;
+            } else {
+                statusEl.innerHTML = `<span class="error">'${escapeHtml(item.title)}'의 좌표 정보가 DB에 없습니다.</span>`;
+                dbg('좌표 정보 없음', item);
+            }
+        }
+
+        function renderList(items){
+            listEl.innerHTML = '';
+            if (!items || items.length === 0) {
+                return;
+            }
+            for (const item of items){
+                const id = item.no;
+                const div = document.createElement('div');
+                div.className = 'place';
+                div.id = 'place-' + id;
+                div.innerHTML = `<div style="font-weight:600">${escapeHtml(item.title||'제목 없음')}</div><div class="meta">${escapeHtml(item.address||'주소 정보 없음')}${item.phone? ' | ' + escapeHtml(item.phone):''}</div>`;
+                div.addEventListener('click', ()=> onPlaceClick(item));
+                listEl.appendChild(div);
+            }
+        }
+
+        function renderPagination(currentPage, totalCount) {
+            paginationEl.innerHTML = '';
+            const totalPages = Math.ceil(totalCount / pageSize);
+            if (totalPages <= 1) return;
+
+            const pageGroupSize = 10;
+            const startPage = Math.floor(currentPage / pageGroupSize) * pageGroupSize;
+            const endPage = Math.min(startPage + pageGroupSize, totalPages);
+
+            if (startPage > 0) {
+                const prev = document.createElement('a');
+                prev.innerHTML = '&laquo;';
+                prev.dataset.page = startPage - 1;
+                paginationEl.appendChild(prev);
+            }
+
+            for (let i = startPage; i < endPage; i++) {
+                const pageLink = document.createElement('a');
+                pageLink.textContent = i + 1;
+                pageLink.dataset.page = i;
+                if (i === currentPage) {
+                    pageLink.classList.add('active');
+                }
+                paginationEl.appendChild(pageLink);
+            }
+
+            if (endPage < totalPages) {
+                const next = document.createElement('a');
+                next.innerHTML = '&raquo;';
+                next.dataset.page = endPage;
+                paginationEl.appendChild(next);
+            }
+        }
+
+        function fetchPage(page = 0, keyword = '') {
+            statusEl.textContent = '목록을 불러오는 중...';
+            listEl.innerHTML = '';
+            paginationEl.innerHTML = '';
+
+            let url = `/api/travels?page=${page}&size=${pageSize}`;
+            if (keyword) {
+                url += `&keyword=${encodeURIComponent(keyword)}`;
+            }
+
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) throw new Error(`API 오류: ${response.status}`);
+                    return response.json();
+                })
+                .then(pagedResult => {
+                    renderList(pagedResult.items);
+                    renderPagination(page, pagedResult.totalCount);
+                    if (pagedResult.totalCount > 0) {
+                        statusEl.textContent = `총 ${pagedResult.totalCount}개의 결과를 찾았습니다.`;
+                    } else {
+                        statusEl.innerHTML = '<div class="error">검색 결과가 없습니다.</div>';
+                    }
+                })
+                .catch(err => {
+                    dbg('fetch fail', err);
+                    statusEl.innerHTML = '<div class="error">데이터를 불러오는 데 실패했습니다.</div>';
+                });
+        }
+
+        function handleSearch() {
+            const keyword = searchInput.value.trim();
+            fetchPage(0, keyword);
+        }
+
+        function initApp(){
+            try {
+                map = new kakao.maps.Map(mapEl, { center: new kakao.maps.LatLng(36.5, 127.5), level: 11 });
+            } catch(e) {
+                statusEl.innerHTML = '<div class="error">지도 초기화에 실패했습니다.</div>';
+                return;
+            }
+
+            paginationEl.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (e.target.tagName === 'A' && e.target.dataset.page) {
+                    const keyword = searchInput.value.trim();
+                    fetchPage(parseInt(e.target.dataset.page, 10), keyword);
+                }
+            });
+
+            searchBtn.addEventListener('click', handleSearch);
+            searchInput.addEventListener('keyup', (e) => {
+                if (e.key === 'Enter') {
+                    handleSearch();
+                }
+            });
+
+            fetchPage(0, '');
+        }
+
+        function loadSdk() {
+            if (window.kakao && kakao.maps && typeof kakao.maps.load === 'function') {
+                kakao.maps.load(initApp);
+            } else {
+                let attempts = 0;
+                const timer = setInterval(()=> {
+                    attempts++;
+                    if (window.kakao && kakao.maps && typeof kakao.maps.load === 'function') {
+                        clearInterval(timer);
+                        kakao.maps.load(initApp);
+                        return;
+                    }
+                    if (attempts > 50) {
+                        clearInterval(timer);
+                        statusEl.innerHTML = '<div class="error">지도 SDK를 불러오는 데 실패했습니다.</div>';
+                    }
+                }, 100);
+            }
+        }
+        document.addEventListener('DOMContentLoaded', loadSdk);
+    })();
+</script>
+</body>
+</html>
