@@ -16,6 +16,5 @@ public class Travel {
     private Double latitude;
     private Double longitude;
 
-    // 여러 장의 이미지를 담던 List<String> images; 대신 아래 필드로 변경
     private String mainImage;
 }

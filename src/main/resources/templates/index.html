@@ -2,7 +2,7 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8" />
-    <title>Travel Map</title>
+    <title>Travel Map (Optimized)</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin:0; padding:0; }
         #wrap { display:flex; height:100vh; }
@@ -13,23 +13,16 @@
         .place:hover { background:#f7f7f7; }
         .place.active { background:#e6f7ff; border-left: 3px solid #007bff; padding-left:9px; }
         .meta { color:#666; font-size:0.9rem; margin-top:6px; }
-
-        /* ❗️❗️❗️ [수정 1] 이미지 갤러리 관련 CSS를 삭제했습니다. ❗️❗️❗️ */
-        /* .image-gallery, .image-gallery img, .no-image 스타일 제거 */
-
         .status-text { color:#888; padding: 10px; }
         .error { color:crimson; font-weight: bold; }
-
         .search-box { display: flex; padding: 0 10px 10px 10px; gap: 8px; }
         .search-box input { flex-grow: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
         .search-box button { padding: 8px 12px; border: none; background-color: #007bff; color: white; cursor: pointer; border-radius: 4px; }
-
         #pagination { padding: 15px 10px; text-align: center; flex-shrink: 0; }
         #pagination a { color: black; padding: 8px 12px; text-decoration: none; transition: background-color .3s; border: 1px solid #ddd; margin: 0 2px; cursor: pointer; }
         #pagination a.active { background-color: #007bff; color: white; border: 1px solid #007bff; }
         #pagination a:hover:not(.active) { background-color: #ddd; }
     </style>
-
     <script th:src="@{|//dapi.kakao.com/v2/maps/sdk.js?appkey=${@environment.getProperty('kakao.api.key')}&libraries=services&autoload=false|}"></script>
 </head>
 <body>
@@ -51,7 +44,6 @@
 
 <script>
     (function(){
-        // ... (다른 변수 및 함수 선언은 이전과 동일) ...
         const statusEl = document.getElementById('status');
         const listEl = document.getElementById('list');
         const mapEl = document.getElementById('map');
@@ -60,39 +52,170 @@
         const searchBtn = document.getElementById('search-btn');
 
         let map = null;
-        const markers = {}, infowindows = {};
+        let markers = {};
+        let infowindow = null;
         const pageSize = 10;
 
+        // --- 2. 유틸리티 함수 ---
         function escapeHtml(text){ if (!text) return ''; return String(text).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-        function highlightItem(id){ document.querySelectorAll('.place').forEach(el => el.classList.remove('active')); const el = document.getElementById('place-' + id); if (el) { el.classList.add('active'); el.scrollIntoView({behavior:'smooth', block:'center'}); } }
-        function clearAllInfoWindows() { for (let iw of Object.values(infowindows)) { try { iw.close(); } catch(e){} } }
-        function showMarkerFor(id, title, address, lat, lng, imageUrl){ const pos = new kakao.maps.LatLng(lat, lng); if (markers[id]) { clearAllInfoWindows(); infowindows[id].open(map, markers[id]); map.panTo(pos); return; } const marker = new kakao.maps.Marker({ position: pos }); marker.setMap(map); let imageHtml = ''; if (imageUrl && !imageUrl.includes('default-travel.png')) { imageHtml = `<div style="margin-top:8px;"><img src="${imageUrl}" alt="${escapeHtml(title)}" style="width:100%; max-width:210px; height:auto; border-radius:4px;"></div>`; } const content = `<div style="padding:8px;max-width:220px;min-width:180px;"><strong>${escapeHtml(title)}</strong><div style="font-size:0.9em;color:#666;margin-top:6px">${escapeHtml(address)}</div>${imageHtml}</div>`; const iw = new kakao.maps.InfoWindow({ content: content, removable: true }); markers[id] = marker; infowindows[id] = iw; kakao.maps.event.addListener(marker, 'click', () => { highlightItem(id); clearAllInfoWindows(); iw.open(map, marker); map.panTo(pos); }); clearAllInfoWindows(); iw.open(map, marker); map.panTo(pos); }
-        function onPlaceClick(item){ highlightItem(item.no); if (item.latitude && item.longitude) { showMarkerFor(item.no, item.title, item.address, item.latitude, item.longitude, item.mainImage); } }
 
-        // ❗️❗️❗️ [수정 2] renderList 함수에서 이미지 관련 HTML 생성을 제거했습니다. ❗️❗️❗️
+        function highlightItem(id){
+            document.querySelectorAll('.place').forEach(el => el.classList.remove('active'));
+            const el = document.getElementById('place-' + id);
+            if (el) {
+                el.classList.add('active');
+                el.scrollIntoView({behavior:'smooth', block:'center'});
+            }
+        }
+
+        function clearAllMarkers() {
+            if(infowindow) infowindow.close();
+            for (let marker of Object.values(markers)) {
+                marker.setMap(null);
+            }
+            markers = {};
+        }
+
+        function displayMarkers(items) {
+            clearAllMarkers();
+            if (!items || items.length === 0) return;
+
+            const bounds = new kakao.maps.LatLngBounds();
+
+            items.forEach(item => {
+                if (!item.latitude || !item.longitude) return;
+
+                const position = new kakao.maps.LatLng(item.latitude, item.longitude);
+                const marker = new kakao.maps.Marker({ position: position });
+                marker.setMap(map);
+                markers[item.no] = marker; // 마커 저장
+
+                kakao.maps.event.addListener(marker, 'click', () => {
+                    onPlaceClick(item);
+                });
+
+                bounds.extend(position);
+            });
+
+            if (Object.keys(markers).length > 0) {
+                map.setBounds(bounds);
+            }
+        }
+
+        function onPlaceClick(item){
+            highlightItem(item.no);
+
+            const targetMarker = markers[item.no];
+            if (!targetMarker) return;
+
+            let imageHtml = '';
+            if (item.mainImage && !item.mainImage.includes('default-travel.png')) {
+                imageHtml = `<div style="margin-top:8px;"><img src="${item.mainImage}" alt="${escapeHtml(item.title)}" style="width:100%; max-width:210px; height:auto; border-radius:4px;"></div>`;
+            }
+            const content = `<div style="padding:8px;max-width:220px;min-width:180px;"><strong>${escapeHtml(item.title)}</strong><div style="font-size:0.9em;color:#666;margin-top:6px">${escapeHtml(item.address)}</div>${imageHtml}</div>`;
+
+            infowindow.setContent(content);
+            infowindow.open(map, targetMarker);
+            map.panTo(targetMarker.getPosition());
+        }
+
         function renderList(items){
             listEl.innerHTML = '';
             if (!items || items.length === 0) return;
 
-            for (const item of items){
+            items.forEach(item => {
                 const div = document.createElement('div');
                 div.className = 'place';
                 div.id = 'place-' + item.no;
-
-                // 이미지 갤러리 HTML 부분을 완전히 제거
                 div.innerHTML = `
                     <div style="font-weight:600">${escapeHtml(item.title)}</div>
                     <div class="meta">${escapeHtml(item.address)}</div>`;
-
                 div.addEventListener('click', () => onPlaceClick(item));
                 listEl.appendChild(div);
+            });
+        }
+
+        function renderPagination(currentPage, totalCount, keyword) {
+            paginationEl.innerHTML = '';
+            const totalPages = Math.ceil(totalCount / pageSize);
+            if (totalPages <= 1) return;
+            const pageGroupSize = 10;
+            const startPage = Math.floor((currentPage - 1) / pageGroupSize) * pageGroupSize + 1;
+            const endPage = Math.min(startPage + pageGroupSize - 1, totalPages);
+            if (startPage > 1) {
+                const prev = document.createElement('a');
+                prev.innerHTML = '&laquo;';
+                prev.dataset.page = startPage - 1;
+                paginationEl.appendChild(prev);
+            }
+            for (let i = startPage; i <= endPage; i++) {
+                const pageLink = document.createElement('a');
+                pageLink.textContent = i;
+                pageLink.dataset.page = i;
+                if (i === currentPage) {
+                    pageLink.classList.add('active');
+                }
+                paginationEl.appendChild(pageLink);
+            }
+            if (endPage < totalPages) {
+                const next = document.createElement('a');
+                next.innerHTML = '&raquo;';
+                next.dataset.page = endPage + 1;
+                paginationEl.appendChild(next);
             }
         }
 
-        function renderPagination(currentPage, totalCount, keyword) { /* 이전과 동일 */ paginationEl.innerHTML = ''; const totalPages = Math.ceil(totalCount / pageSize); if (totalPages <= 1) return; const pageGroupSize = 10; const startPage = Math.floor((currentPage - 1) / pageGroupSize) * pageGroupSize + 1; const endPage = Math.min(startPage + pageGroupSize - 1, totalPages); if (startPage > 1) { const prev = document.createElement('a'); prev.innerHTML = '&laquo;'; prev.dataset.page = startPage - 1; paginationEl.appendChild(prev); } for (let i = startPage; i <= endPage; i++) { const pageLink = document.createElement('a'); pageLink.textContent = i; pageLink.dataset.page = i; if (i === currentPage) { pageLink.classList.add('active'); } paginationEl.appendChild(pageLink); } if (endPage < totalPages) { const next = document.createElement('a'); next.innerHTML = '&raquo;'; next.dataset.page = endPage + 1; paginationEl.appendChild(next); } }
-        function fetchPage(page = 1, keyword = '') { /* 이전과 동일 */ statusEl.textContent = '목록을 불러오는 중...'; listEl.innerHTML = ''; paginationEl.innerHTML = ''; const url = `/api/travels?page=${page-1}&size=${pageSize}&keyword=${encodeURIComponent(keyword)}`; fetch(url).then(response => response.json()).then(pagedResult => { renderList(pagedResult.items); renderPagination(page, pagedResult.totalCount, keyword); if (pagedResult.totalCount > 0) { statusEl.textContent = `총 ${pagedResult.totalCount}개의 결과를 찾았습니다.`; } else { statusEl.innerHTML = '<div class="error">검색 결과가 없습니다.</div>'; } }).catch(err => { console.error('fetch fail', err); statusEl.innerHTML = '<div class="error">데이터를 불러오는 데 실패했습니다.</div>'; }); }
-        function handleSearch() { /* 이전과 동일 */ fetchPage(1, searchInput.value.trim()); }
-        function initApp(){ /* 이전과 동일 */ try { map = new kakao.maps.Map(mapEl, { center: new kakao.maps.LatLng(36.5, 127.5), level: 11 }); } catch(e) { statusEl.innerHTML = '<div class="error">지도 초기화에 실패했습니다.</div>'; return; } paginationEl.addEventListener('click', (e) => { e.preventDefault(); if (e.target.tagName === 'A' && e.target.dataset.page) { fetchPage(parseInt(e.target.dataset.page, 10), searchInput.value.trim()); } }); searchBtn.addEventListener('click', handleSearch); searchInput.addEventListener('keyup', (e) => { if (e.key === 'Enter') handleSearch(); }); fetchPage(1, ''); }
+        function fetchPage(page = 1, keyword = '') {
+            statusEl.textContent = '목록을 불러오는 중...';
+
+            const url = `/api/travels?page=${page-1}&size=${pageSize}&keyword=${encodeURIComponent(keyword)}`;
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) throw new Error('데이터 로딩 실패');
+                    return response.json();
+                })
+                .then(pagedResult => {
+                    renderList(pagedResult.items);
+                    renderPagination(page, pagedResult.totalCount, keyword);
+                    displayMarkers(pagedResult.items);
+
+                    if (pagedResult.totalCount > 0) {
+                        statusEl.textContent = `총 ${pagedResult.totalCount}개의 결과를 찾았습니다.`;
+                    } else {
+                        statusEl.innerHTML = '<div class="error">검색 결과가 없습니다.</div>';
+                    }
+                }).catch(err => {
+                console.error('fetch fail', err);
+                statusEl.innerHTML = '<div class="error">데이터를 불러오는 데 실패했습니다.</div>';
+                clearAllMarkers();
+            });
+        }
+
+        function handleSearch() {
+            fetchPage(1, searchInput.value.trim());
+        }
+
+        function initApp(){
+            try {
+                map = new kakao.maps.Map(mapEl, { center: new kakao.maps.LatLng(36.5, 127.5), level: 11 });
+                infowindow = new kakao.maps.InfoWindow({ removable: true });
+            } catch(e) {
+                statusEl.innerHTML = '<div class="error">지도 초기화에 실패했습니다.</div>';
+                return;
+            }
+
+            paginationEl.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (e.target.tagName === 'A' && e.target.dataset.page) {
+                    fetchPage(parseInt(e.target.dataset.page, 10), searchInput.value.trim());
+                }
+            });
+            searchBtn.addEventListener('click', handleSearch);
+            searchInput.addEventListener('keyup', (e) => {
+                if (e.key === 'Enter') handleSearch();
+            });
+            fetchPage(1, '');
+        }
 
         kakao.maps.load(initApp);
     })();

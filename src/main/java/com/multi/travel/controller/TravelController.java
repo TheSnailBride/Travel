@@ -37,4 +37,5 @@ public class TravelController {
     public Travel getTravel(@PathVariable int no) {
         return travelService.getTravelById(no);
     }
+
 }

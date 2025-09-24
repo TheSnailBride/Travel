@@ -13,4 +13,5 @@ public interface TravelMapper {
     List<Travel> findAllPaged(@Param("offset") int offset, @Param("limit") int limit, @Param("keyword") String keyword);
 
     Travel findById(int no);
+
 }
